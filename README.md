@@ -1,14 +1,26 @@
 # Iris - LiveKit Agent
 
+# Iris – LiveKit Realtime Agent
 
+Iris is the realtime LiveKit agent of the Sfinx system.
 
-## Dev Setup
+It acts as the **realtime I/O layer** for the interview experience, handling:
+- Live audio input/output
+- Turn-taking and speech boundaries
+- Speech-to-text (STT) and text-to-speech (TTS)
+- Low-latency interaction via LiveKit rooms
 
-Clone the repository and install dependencies to a virtual environment:
+The name *Iris* is inspired by Greek mythology, where Iris is the messenger of the gods—reflecting the agent’s role as a realtime communication bridge between users and the AI system.
+
+## Development Setup
+
+Clone the repository and install dependencies to a virtual environment (Prefer to use Python 3.13, uv):
 
 ```console
 cd iris
-uv sync
+rm -rf .venv/
+uv sync --python 3.13
+source .venv/bin/activate
 ```
 
 Sign up for [LiveKit Cloud](https://cloud.livekit.io/) then set up the environment by copying `.env.example` to `.env.local` and filling in the required keys:
@@ -73,16 +85,6 @@ This project includes a complete suite of evals, based on the LiveKit Agents [te
 ```console
 uv run pytest
 ```
-
-## Using this template repo for your own project
-
-Once you've started your own project based on this repo, you should:
-
-1. **Check in your `uv.lock`**: This file is currently untracked for the template, but you should commit it to your repository for reproducible builds and proper configuration management. (The same applies to `livekit.toml`, if you run your agents in LiveKit Cloud)
-
-2. **Remove the git tracking test**: Delete the "Check files not tracked in git" step from `.github/workflows/tests.yml` since you'll now want this file to be tracked. These are just there for development purposes in the template repo itself.
-
-3. **Add your own repository secrets**: You must [add secrets](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/using-secrets-in-github-actions) for `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` so that the tests can run in CI.
 
 ## Deploying to production
 
