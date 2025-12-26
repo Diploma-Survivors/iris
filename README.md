@@ -1,7 +1,5 @@
 # Iris - LiveKit Agent
 
-# Iris – LiveKit Realtime Agent
-
 Iris is the realtime LiveKit agent of the Sfinx system.
 
 It acts as the **realtime I/O layer** for the interview experience, handling:
