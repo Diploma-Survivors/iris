@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Interview Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    h1 { margin-bottom: 10px; color: #4fc3f7; }
+    .subtitle { color: #888; margin-bottom: 30px; }
+    
+    .config-panel {
+      background: #16213e;
+      padding: 20px;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 500px;
+      margin-bottom: 20px;
+    }
+    .config-panel h3 { margin-bottom: 15px; color: #4fc3f7; }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; margin-bottom: 5px; color: #aaa; font-size: 14px; }
+    .form-group input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #0f0f23;
+      color: #fff;
+      font-size: 14px;
+    }
+    .form-group input:focus { outline: none; border-color: #4fc3f7; }
+    
+    .controls {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    button {
+      padding: 12px 30px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-connect {
+      background: #4fc3f7;
+      color: #1a1a2e;
+    }
+    .btn-connect:hover { background: #29b6f6; }
+    .btn-connect:disabled { background: #333; color: #666; cursor: not-allowed; }
+    
+    .btn-disconnect {
+      background: #ef5350;
+      color: white;
+    }
+    .btn-disconnect:hover { background: #f44336; }
+    
+    .btn-mute {
+      background: #ff9800;
+      color: white;
+    }
+    .btn-mute:hover { background: #fb8c00; }
+    .btn-mute.muted { background: #666; }
+    
+    .status-panel {
+      background: #16213e;
+      padding: 20px;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 500px;
+      margin-bottom: 20px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #333;
+    }
+    .status-row:last-child { border-bottom: none; }
+    .status-label { color: #888; }
+    .status-value { font-weight: 500; }
+    .status-value.connected { color: #4caf50; }
+    .status-value.disconnected { color: #ef5350; }
+    .status-value.speaking { color: #ff9800; }
+    .status-value.listening { color: #4fc3f7; }
+    
+    .visualizer {
+      width: 100%;
+      max-width: 500px;
+      height: 100px;
+      background: #16213e;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    .bar {
+      width: 8px;
+      background: #4fc3f7;
+      border-radius: 4px;
+      transition: height 0.1s;
+    }
+    
+    .transcript {
+      background: #16213e;
+      padding: 20px;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 500px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .transcript h3 { margin-bottom: 15px; color: #4fc3f7; }
+    .message {
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+    }
+    .message.user { background: #1e3a5f; margin-left: 40px; }
+    .message.agent { background: #2d2d44; margin-right: 40px; }
+    .message .role { font-size: 12px; color: #888; margin-bottom: 4px; }
+    
+    .error { color: #ef5350; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>🎙️ Voice Interview Test</h1>
+  <p class="subtitle">Test the LiveKit voice agent locally</p>
+
+  <div class="config-panel">
+    <h3>Configuration</h3>
+    <div class="form-group">
+      <label>Backend URL</label>
+      <input type="text" id="backendUrl" value="http://localhost:3000/v1" />
+    </div>
+    <div class="form-group">
+      <label>Interview ID (UUID)</label>
+      <input type="text" id="interviewId" placeholder="e.g., 550e8400-e29b-41d4-a716-446655440000" />
+    </div>
+    <div class="form-group">
+      <label>JWT Token (from login)</label>
+      <input type="text" id="jwtToken" placeholder="Bearer token from authentication" />
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn-connect" id="connectBtn" onclick="connect()">Connect</button>
+    <button class="btn-mute" id="muteBtn" onclick="toggleMute()" style="display:none">Mute</button>
+    <button class="btn-disconnect" id="disconnectBtn" onclick="disconnect()" style="display:none">Disconnect</button>
+  </div>
+
+  <div class="status-panel">
+    <div class="status-row">
+      <span class="status-label">Connection</span>
+      <span class="status-value disconnected" id="connectionStatus">Disconnected</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Agent</span>
+      <span class="status-value" id="agentStatus">--</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">Microphone</span>
+      <span class="status-value" id="micStatus">--</span>
+    </div>
+  </div>
+
+  <div class="visualizer" id="visualizer">
+    <!-- Bars will be added dynamically -->
+  </div>
+
+  <div class="transcript">
+    <h3>Transcript</h3>
+    <div id="messages"></div>
+  </div>
+
+  <p class="error" id="error"></p>
+
+  <!-- LiveKit SDK -->
+  <script src="https://unpkg.com/livekit-client@2.9.1/dist/livekit-client.umd.js"></script>
+  
+  <script>
+    let room = null;
+    let localTrack = null;
+    let isMuted = false;
+
+    // Initialize visualizer bars
+    const visualizer = document.getElementById('visualizer');
+    for (let i = 0; i < 20; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = '10px';
+      visualizer.appendChild(bar);
+    }
+    const bars = visualizer.querySelectorAll('.bar');
+
+    function showError(msg) {
+      document.getElementById('error').textContent = msg;
+    }
+
+    function clearError() {
+      document.getElementById('error').textContent = '';
+    }
+
+    function updateStatus(id, value, className = '') {
+      const el = document.getElementById(id);
+      el.textContent = value;
+      el.className = 'status-value ' + className;
+    }
+
+    function addMessage(role, content) {
+      const messages = document.getElementById('messages');
+      const div = document.createElement('div');
+      div.className = 'message ' + role;
+      div.innerHTML = `<div class="role">${role === 'user' ? 'You' : 'Interviewer'}</div>${content}`;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function connect() {
+      clearError();
+      
+      const backendUrl = document.getElementById('backendUrl').value;
+      const interviewId = document.getElementById('interviewId').value;
+      const jwtToken = document.getElementById('jwtToken').value;
+
+      if (!interviewId) {
+        showError('Please enter an Interview ID');
+        return;
+      }
+
+      if (!jwtToken) {
+        showError('Please enter a JWT token');
+        return;
+      }
+
+      document.getElementById('connectBtn').disabled = true;
+      updateStatus('connectionStatus', 'Connecting...', '');
+
+      try {
+        // 1. Get LiveKit token from backend
+        const tokenRes = await fetch(`${backendUrl}/livekit/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': jwtToken.startsWith('Bearer ') ? jwtToken : `Bearer ${jwtToken}`
+          },
+          body: JSON.stringify({ interviewId })
+        });
+
+        if (!tokenRes.ok) {
+          const err = await tokenRes.text();
+          throw new Error(`Token request failed: ${err}`);
+        }
+
+        const response = await tokenRes.json();
+        // Handle wrapped response format: { data: { token, url, roomName } }
+        const { token, url, roomName } = response.data || response;
+        console.log('Got token for room:', roomName);
+
+        // 2. Connect to LiveKit room
+        room = new LivekitClient.Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+
+        // Set up event handlers
+        room.on(LivekitClient.RoomEvent.Connected, () => {
+          console.log('Connected to room');
+          updateStatus('connectionStatus', 'Connected', 'connected');
+          document.getElementById('connectBtn').style.display = 'none';
+          document.getElementById('muteBtn').style.display = 'inline-block';
+          document.getElementById('disconnectBtn').style.display = 'inline-block';
+        });
+
+        room.on(LivekitClient.RoomEvent.Disconnected, () => {
+          console.log('Disconnected from room');
+          updateStatus('connectionStatus', 'Disconnected', 'disconnected');
+          updateStatus('agentStatus', '--', '');
+          resetUI();
+        });
+
+        room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+          console.log('Participant connected:', participant.identity);
+          if (participant.identity.startsWith('agent')) {
+            updateStatus('agentStatus', 'Connected', 'connected');
+          }
+        });
+
+        room.on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+          if (participant.identity.startsWith('agent')) {
+            updateStatus('agentStatus', 'Disconnected', 'disconnected');
+          }
+        });
+
+        // Handle agent state changes
+        room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, (changedAttributes, participant) => {
+          if (participant.identity.startsWith('agent')) {
+            const state = participant.attributes['lk.agent.state'];
+            if (state) {
+              const stateClass = state === 'speaking' ? 'speaking' : 
+                                 state === 'listening' ? 'listening' : '';
+              updateStatus('agentStatus', state.charAt(0).toUpperCase() + state.slice(1), stateClass);
+            }
+          }
+        });
+
+        // Handle incoming audio
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          if (track.kind === 'audio') {
+            const audio = track.attach();
+            document.body.appendChild(audio);
+          }
+        });
+
+        // Handle transcriptions (if available)
+        room.on(LivekitClient.RoomEvent.TranscriptionReceived, (segments, participant) => {
+          for (const segment of segments) {
+            if (segment.final) {
+              const role = participant.identity.startsWith('agent') ? 'agent' : 'user';
+              addMessage(role, segment.text);
+            }
+          }
+        });
+
+        // Connect to room
+        await room.connect(url, token);
+
+        // Publish microphone
+        localTrack = await LivekitClient.createLocalAudioTrack();
+        await room.localParticipant.publishTrack(localTrack);
+        updateStatus('micStatus', 'Active', 'connected');
+
+        // Start audio visualization
+        startVisualization(localTrack);
+
+      } catch (err) {
+        console.error('Connection error:', err);
+        showError(err.message);
+        document.getElementById('connectBtn').disabled = false;
+        updateStatus('connectionStatus', 'Failed', 'disconnected');
+      }
+    }
+
+    function disconnect() {
+      if (room) {
+        room.disconnect();
+        room = null;
+      }
+      resetUI();
+    }
+
+    function toggleMute() {
+      if (localTrack) {
+        isMuted = !isMuted;
+        localTrack.mute(isMuted);
+        const btn = document.getElementById('muteBtn');
+        btn.textContent = isMuted ? 'Unmute' : 'Mute';
+        btn.className = 'btn-mute' + (isMuted ? ' muted' : '');
+        updateStatus('micStatus', isMuted ? 'Muted' : 'Active', isMuted ? '' : 'connected');
+      }
+    }
+
+    function resetUI() {
+      document.getElementById('connectBtn').style.display = 'inline-block';
+      document.getElementById('connectBtn').disabled = false;
+      document.getElementById('muteBtn').style.display = 'none';
+      document.getElementById('disconnectBtn').style.display = 'none';
+      updateStatus('micStatus', '--', '');
+      bars.forEach(bar => bar.style.height = '10px');
+    }
+
+    function startVisualization(track) {
+      const audioContext = new AudioContext();
+      const mediaStream = new MediaStream([track.mediaStreamTrack]);
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      function animate() {
+        if (!room) return;
+        analyser.getByteFrequencyData(dataArray);
+        
+        bars.forEach((bar, i) => {
+          const value = dataArray[i] || 0;
+          const height = Math.max(10, (value / 255) * 80);
+          bar.style.height = height + 'px';
+        });
+
+        requestAnimationFrame(animate);
+      }
+      animate();
+    }
+  </script>
+</body>
+</html>

@@ -1,9 +1,52 @@
+"""
+Iris - Voice Interview Agent
+
+PURPOSE:
+Main entry point for the LiveKit voice agent that conducts AI coding interviews.
+This module sets up the voice pipeline and handles the agent lifecycle.
+
+HOW IT WORKS:
+1. Agent server registers with LiveKit Cloud
+2. When a user starts a voice interview, frontend requests a token from sfinx-backend
+3. User joins the LiveKit room using the token
+4. LiveKit dispatches this agent to join the same room
+5. Agent fetches interview context from backend using room metadata
+6. Voice conversation flows: User Speech → STT → LLM → TTS → Agent Speech
+7. Transcripts are stored to backend for evaluation
+
+COMPONENTS:
+- STT (Speech-to-Text): AssemblyAI - Converts user speech to text
+- LLM (Language Model): OpenAI GPT-4.1-mini - Generates responses
+- TTS (Text-to-Speech): Cartesia Sonic-3 - Converts responses to speech
+- VAD (Voice Activity Detection): Silero - Detects when user is speaking
+- Turn Detector: Multilingual model - Determines when user finished speaking
+
+ARCHITECTURE:
+┌─────────────────────────────────────────────────────────────────┐
+│                        LiveKit Room                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────┐    ┌─────────────────────────────────────────┐    │
+│  │ Frontend │◄──►│              Iris Agent                 │    │
+│  │  (User)  │    │  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐    │    │
+│  └──────────┘    │  │ STT │→ │ LLM │→ │ TTS │→ │Audio│    │    │
+│                  │  └─────┘  └─────┘  └─────┘  └─────┘    │    │
+│                  └─────────────────────────────────────────┘    │
+│                                  │                               │
+└──────────────────────────────────┼───────────────────────────────┘
+                                   ▼
+                         ┌──────────────────┐
+                         │  sfinx-backend   │
+                         │  - Context API   │
+                         │  - Transcript    │
+                         └──────────────────┘
+"""
+import asyncio
 import logging
 
 from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
-    Agent,
     AgentServer,
     AgentSession,
     JobContext,
@@ -15,99 +58,129 @@ from livekit.agents import (
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from backend_client import backend_client
+from interviewer import InterviewerAgent
+
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
-
-
-class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
-        )
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
 
 
 server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
+    """
+    Prewarm function - called when agent process starts.
+
+    Loads heavy models (like VAD) once and reuses them across sessions.
+    This reduces latency when a new interview starts.
+    """
     proc.userdata["vad"] = silero.VAD.load()
 
 
 server.setup_fnc = prewarm
 
 
+async def store_transcript_callback(interview_id: str, role: str, content: str):
+    """
+    Callback to store transcript messages to the backend.
+
+    Called after each turn to persist the conversation for:
+    - Chat history display
+    - Final interview evaluation
+    - Seamless text/voice mode switching
+    """
+    if interview_id and content:
+        success = await backend_client.store_transcript(interview_id, role, content)
+        if success:
+            logger.info(f"Transcript stored: {role} - {content[:30]}...")
+        else:
+            logger.error(f"Failed to store transcript: {role}")
+
+
 @server.rtc_session()
-async def my_agent(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
+async def interview_agent(ctx: JobContext):
+    """
+    Main agent session handler.
+
+    This function is called when a new room needs an agent.
+    It sets up the interview-specific agent and voice pipeline.
+    """
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    logger.info(f"Agent joining room: {ctx.room.name}")
+
+    interview_id = backend_client.extract_interview_id(ctx.room.name)
+    interview_context = None
+
+    if interview_id:
+        logger.info(f"Fetching context for interview: {interview_id}")
+        interview_context = await backend_client.get_interview_context(interview_id)
+
+        if interview_context:
+            logger.info(
+                f"Context loaded - Problem: {interview_context.get('problemSnapshot', {}).get('title', 'Unknown')}"
+            )
+        else:
+            logger.warning(f"Failed to fetch context for interview: {interview_id}")
+    else:
+        logger.warning(f"Could not extract interview ID from room: {ctx.room.name}")
+
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=inference.LLM(model="openai/gpt-4.1-mini"),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+            model="cartesia/sonic-3",
+            voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
         ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
+    background_tasks: set = set()
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event):
+        """
+        Store conversation items (both user and agent) to backend.
+        This event fires when a message is committed to the chat history.
+        """
+        if not interview_id:
+            return
 
-    # Start the session, which initializes the voice pipeline and warms up the models
+        item = event.item
+        if hasattr(item, "role") and hasattr(item, "content"):
+            role = "user" if item.role == "user" else "assistant"
+            content = ""
+
+            if isinstance(item.content, str):
+                content = item.content
+            elif isinstance(item.content, list):
+                for part in item.content:
+                    if hasattr(part, "text"):
+                        content += part.text
+                    elif isinstance(part, str):
+                        content += part
+
+            if content:
+                logger.info(f"Storing {role} transcript: {content[:50]}...")
+                task = asyncio.create_task(
+                    store_transcript_callback(interview_id, role, content)
+                )
+                background_tasks.add(task)
+                task.add_done_callback(background_tasks.discard)
+
+    interviewer = InterviewerAgent(
+        interview_context=interview_context,
+        interview_id=interview_id,
+    )
+
     await session.start(
-        agent=Assistant(),
+        agent=interviewer,
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -118,8 +191,9 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
+
+    logger.info(f"Interview agent started for room: {ctx.room.name}")
 
 
 if __name__ == "__main__":
