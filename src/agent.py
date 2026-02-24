@@ -1,47 +1,8 @@
 """
 Iris - Voice Interview Agent
-
-PURPOSE:
-Main entry point for the LiveKit voice agent that conducts AI coding interviews.
-This module sets up the voice pipeline and handles the agent lifecycle.
-
-HOW IT WORKS:
-1. Agent server registers with LiveKit Cloud
-2. When a user starts a voice interview, frontend requests a token from sfinx-backend
-3. User joins the LiveKit room using the token
-4. LiveKit dispatches this agent to join the same room
-5. Agent fetches interview context from backend using room metadata
-6. Voice conversation flows: User Speech → STT → LLM → TTS → Agent Speech
-7. Transcripts are stored to backend for evaluation
-
-COMPONENTS:
-- STT (Speech-to-Text): AssemblyAI - Converts user speech to text
-- LLM (Language Model): OpenAI GPT-4.1-mini - Generates responses
-- TTS (Text-to-Speech): Cartesia Sonic-3 - Converts responses to speech
-- VAD (Voice Activity Detection): Silero - Detects when user is speaking
-- Turn Detector: Multilingual model - Determines when user finished speaking
-
-ARCHITECTURE:
-┌─────────────────────────────────────────────────────────────────┐
-│                        LiveKit Room                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────┐    ┌─────────────────────────────────────────┐    │
-│  │ Frontend │◄──►│              Iris Agent                 │    │
-│  │  (User)  │    │  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐    │    │
-│  └──────────┘    │  │ STT │→ │ LLM │→ │ TTS │→ │Audio│    │    │
-│                  │  └─────┘  └─────┘  └─────┘  └─────┘    │    │
-│                  └─────────────────────────────────────────┘    │
-│                                  │                               │
-└──────────────────────────────────┼───────────────────────────────┘
-                                   ▼
-                         ┌──────────────────┐
-                         │  sfinx-backend   │
-                         │  - Context API   │
-                         │  - Transcript    │
-                         └──────────────────┘
 """
 import asyncio
+import json
 import logging
 
 from dotenv import load_dotenv
@@ -62,72 +23,55 @@ from backend_client import backend_client
 from interviewer import InterviewerAgent
 
 logger = logging.getLogger("agent")
-
 load_dotenv(".env.local")
-
 
 server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
-    """
-    Prewarm function - called when agent process starts.
-
-    Loads heavy models (like VAD) once and reuses them across sessions.
-    This reduces latency when a new interview starts.
-    """
     proc.userdata["vad"] = silero.VAD.load()
 
 
 server.setup_fnc = prewarm
 
 
-async def store_transcript_callback(interview_id: str, role: str, content: str):
-    """
-    Callback to store transcript messages to the backend.
+async def send_to_frontend(room: rtc.Room, msg_type: str, data: dict):
+    """Send data channel message to frontend."""
+    try:
+        payload = json.dumps({"type": msg_type, **data})
+        await room.local_participant.publish_data(
+            payload=payload.encode('utf-8'),
+            reliable=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send to frontend: {e}")
 
-    Called after each turn to persist the conversation for:
-    - Chat history display
-    - Final interview evaluation
-    - Seamless text/voice mode switching
-    """
+
+async def store_transcript(interview_id: str, role: str, content: str):
+    """Store transcript to backend."""
     if interview_id and content:
         success = await backend_client.store_transcript(interview_id, role, content)
         if success:
-            logger.info(f"Transcript stored: {role} - {content[:30]}...")
-        else:
-            logger.error(f"Failed to store transcript: {role}")
+            logger.info(f"Stored {role}: {content[:50]}...")
 
 
 @server.rtc_session()
 async def interview_agent(ctx: JobContext):
-    """
-    Main agent session handler.
-
-    This function is called when a new room needs an agent.
-    It sets up the interview-specific agent and voice pipeline.
-    """
-    ctx.log_context_fields = {
-        "room": ctx.room.name,
-    }
-
+    """Main agent session."""
     logger.info(f"Agent joining room: {ctx.room.name}")
 
     interview_id = backend_client.extract_interview_id(ctx.room.name)
     interview_context = None
 
     if interview_id:
-        logger.info(f"Fetching context for interview: {interview_id}")
         interview_context = await backend_client.get_interview_context(interview_id)
+        logger.info(f"Context loaded for interview: {interview_id}")
 
-        if interview_context:
-            logger.info(
-                f"Context loaded - Problem: {interview_context.get('problemSnapshot', {}).get('title', 'Unknown')}"
-            )
-        else:
-            logger.warning(f"Failed to fetch context for interview: {interview_id}")
-    else:
-        logger.warning(f"Could not extract interview ID from room: {ctx.room.name}")
+    # Track streaming state
+    streaming_msg_id = None
+    streaming_content = ""
+    is_streaming = False
+    background_tasks = set()
 
     session = AgentSession(
         stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
@@ -141,39 +85,132 @@ async def interview_agent(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    background_tasks: set = set()
-
     @session.on("conversation_item_added")
     def on_conversation_item_added(event):
-        """
-        Store conversation items (both user and agent) to backend.
-        This event fires when a message is committed to the chat history.
-        """
+        """Handle both user and agent messages."""
         if not interview_id:
             return
 
         item = event.item
-        if hasattr(item, "role") and hasattr(item, "content"):
-            role = "user" if item.role == "user" else "assistant"
-            content = ""
+        if not hasattr(item, "role") or not hasattr(item, "content"):
+            return
 
-            if isinstance(item.content, str):
-                content = item.content
-            elif isinstance(item.content, list):
-                for part in item.content:
-                    if hasattr(part, "text"):
-                        content += part.text
-                    elif isinstance(part, str):
-                        content += part
+        role = "user" if item.role == "user" else "assistant"
+        
+        # Extract content
+        content = ""
+        if isinstance(item.content, str):
+            content = item.content
+        elif isinstance(item.content, list):
+            for part in item.content:
+                if hasattr(part, "text"):
+                    content += part.text
+                elif isinstance(part, str):
+                    content += part
 
-            if content:
-                logger.info(f"Storing {role} transcript: {content[:50]}...")
-                task = asyncio.create_task(
-                    store_transcript_callback(interview_id, role, content)
+        if not content.strip():
+            return
+
+        logger.info(f"{role} message: {content[:60]}...")
+
+        # Send to frontend via data channel
+        async def send_and_store():
+            msg_id = f"{role}-{asyncio.get_event_loop().time()}"
+            await send_to_frontend(
+                ctx.room,
+                "transcript",
+                {
+                    "role": role,
+                    "content": content,
+                    "messageId": msg_id,
+                    "timestamp": asyncio.get_event_loop().time(),
+                }
+            )
+            await store_transcript(interview_id, role, content)
+
+        task = asyncio.create_task(send_and_store())
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    @session.on("generation_chunk")
+    def on_generation_chunk(event):
+        """Stream LLM chunks to frontend."""
+        nonlocal streaming_msg_id, streaming_content, is_streaming
+
+        # Extract text from event
+        text = ""
+        if hasattr(event, 'chunk') and event.chunk:
+            text = getattr(event.chunk, 'text', str(event.chunk))
+        elif hasattr(event, 'delta'):
+            text = event.delta
+        elif hasattr(event, 'text'):
+            text = event.text
+
+        if not text:
+            return
+
+        # Start new streaming message
+        if not is_streaming:
+            is_streaming = True
+            streaming_msg_id = f"stream-{asyncio.get_event_loop().time()}"
+            streaming_content = ""
+            
+            # Send typing indicator
+            asyncio.create_task(send_to_frontend(
+                ctx.room, "agent_status", {"status": "typing_start"}
+            ))
+
+        streaming_content += text
+
+        # Send chunk
+        async def send_chunk():
+            await send_to_frontend(
+                ctx.room,
+                "transcript_delta",
+                {
+                    "role": "assistant",
+                    "delta": text,
+                    "messageId": streaming_msg_id,
+                }
+            )
+
+        task = asyncio.create_task(send_chunk())
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    @session.on("generation_done")
+    def on_generation_done(event):
+        """Handle generation completion."""
+        nonlocal is_streaming, streaming_content, streaming_msg_id
+
+        if is_streaming:
+            # Send final message
+            async def send_final():
+                await send_to_frontend(
+                    ctx.room, "agent_status", {"status": "typing_end"}
                 )
-                background_tasks.add(task)
-                task.add_done_callback(background_tasks.discard)
+                if streaming_content:
+                    await send_to_frontend(
+                        ctx.room,
+                        "transcript",
+                        {
+                            "role": "assistant",
+                            "content": streaming_content,
+                            "messageId": streaming_msg_id,
+                            "isFinal": True,
+                        }
+                    )
 
+            task = asyncio.create_task(send_final())
+            background_tasks.add(task)
+            task.add_done_callback(background_tasks.discard)
+
+            # Reset state
+            is_streaming = False
+            streaming_content = ""
+            streaming_msg_id = None
+
+    # Create and start agent
     interviewer = InterviewerAgent(
         interview_context=interview_context,
         interview_id=interview_id,
@@ -192,8 +229,10 @@ async def interview_agent(ctx: JobContext):
     )
 
     await ctx.connect()
-
-    logger.info(f"Interview agent started for room: {ctx.room.name}")
+    
+    # Send ready status
+    await send_to_frontend(ctx.room, "agent_status", {"status": "ready"})
+    logger.info(f"Agent ready in room: {ctx.room.name}")
 
 
 if __name__ == "__main__":
