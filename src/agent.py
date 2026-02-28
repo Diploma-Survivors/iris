@@ -4,6 +4,7 @@ Iris - Voice Interview Agent
 import asyncio
 import json
 import logging
+import time
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -58,13 +59,20 @@ async def store_transcript(interview_id: str, role: str, content: str):
 @server.rtc_session()
 async def interview_agent(ctx: JobContext):
     """Main agent session."""
-    logger.info(f"Agent joining room: {ctx.room.name}")
+    t_start = time.monotonic()
+    logger.info(f"[TIMING] Agent joining room: {ctx.room.name}")
 
     interview_id = backend_client.extract_interview_id(ctx.room.name)
     interview_context = None
 
     if interview_id:
+        t_before_context = time.monotonic()
         interview_context = await backend_client.get_interview_context(interview_id)
+        t_after_context = time.monotonic()
+        logger.info(
+            f"[TIMING] Context fetch: {(t_after_context - t_before_context):.2f}s "
+            f"(total: {(t_after_context - t_start):.2f}s)"
+        )
         logger.info(f"Context loaded for interview: {interview_id}")
 
     # Track streaming state
@@ -211,11 +219,18 @@ async def interview_agent(ctx: JobContext):
             streaming_msg_id = None
 
     # Create and start agent
+    t_before_agent = time.monotonic()
     interviewer = InterviewerAgent(
         interview_context=interview_context,
         interview_id=interview_id,
     )
+    t_after_agent = time.monotonic()
+    logger.info(
+        f"[TIMING] InterviewerAgent init: {(t_after_agent - t_before_agent):.2f}s "
+        f"(total: {(t_after_agent - t_start):.2f}s)"
+    )
 
+    t_before_start = time.monotonic()
     await session.start(
         agent=interviewer,
         room=ctx.room,
@@ -227,12 +242,20 @@ async def interview_agent(ctx: JobContext):
             ),
         ),
     )
+    t_after_start = time.monotonic()
+    logger.info(
+        f"[TIMING] session.start (incl. on_enter greeting): "
+        f"{(t_after_start - t_before_start):.2f}s (total: {(t_after_start - t_start):.2f}s)"
+    )
 
     await ctx.connect()
     
     # Send ready status
     await send_to_frontend(ctx.room, "agent_status", {"status": "ready"})
-    logger.info(f"Agent ready in room: {ctx.room.name}")
+    logger.info(
+        f"[TIMING] Agent fully ready: {(time.monotonic() - t_start):.2f}s total | "
+        f"room: {ctx.room.name}"
+    )
 
 
 if __name__ == "__main__":

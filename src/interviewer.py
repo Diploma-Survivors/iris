@@ -45,13 +45,17 @@ VOICE INTERVIEW FLOW:
 └─────────────────────────────┘
 """
 import logging
+import time
 
 from livekit.agents import Agent, RunContext, function_tool
 
 logger = logging.getLogger("interviewer")
 
-# Default prompt used when backend context is unavailable
-DEFAULT_INTERVIEW_PROMPT = """You are a senior software engineer conducting a coding interview.
+# Fallback prompts used when the backend / Langfuse is unreachable.
+# In normal operation these are overridden by the Langfuse-managed templates
+# fetched via the backend context endpoint.
+
+FALLBACK_INTERVIEW_PROMPT = """You are a senior software engineer conducting a coding interview.
 
 Your role:
 - Guide the candidate through the problem
@@ -68,7 +72,7 @@ Rules:
 - Avoid complex formatting, code blocks, or special characters
 """
 
-VOICE_ADAPTATION_PROMPT = """
+FALLBACK_VOICE_ADAPTATION_PROMPT = """
 IMPORTANT - Voice Interview Guidelines:
 - You are speaking, not writing. Keep responses SHORT and conversational.
 - Avoid saying code syntax literally (don't say "curly brace" or "semicolon")
@@ -117,23 +121,35 @@ class InterviewerAgent(Agent):
         self.interview_id = interview_id
         self.interview_context = interview_context
 
-        if interview_context and "systemPrompt" in interview_context:
-            base_prompt = interview_context["systemPrompt"]
-            instructions = base_prompt + VOICE_ADAPTATION_PROMPT
-        else:
-            instructions = DEFAULT_INTERVIEW_PROMPT + VOICE_ADAPTATION_PROMPT
+        base_prompt = (
+            interview_context.get("systemPrompt")
+            if interview_context
+            else None
+        ) or FALLBACK_INTERVIEW_PROMPT
+
+        voice_prompt = (
+            interview_context.get("voiceAdaptationPrompt")
+            if interview_context
+            else None
+        ) or FALLBACK_VOICE_ADAPTATION_PROMPT
+
+        instructions = base_prompt + "\n" + voice_prompt
 
         super().__init__(instructions=instructions)
 
         logger.info(
             f"InterviewerAgent initialized for interview: {interview_id or 'unknown'}"
+            f" (voice prompt from {'langfuse' if interview_context and interview_context.get('voiceAdaptationPrompt') else 'fallback'})"
         )
 
     async def on_enter(self) -> None:
         """Speak the initial greeting when the agent joins the session."""
+        t0 = time.monotonic()
         await self.session.generate_reply(
             instructions="Greet the candidate warmly and ask if they are ready to begin the interview. Keep it brief and friendly — one or two sentences. Do NOT mention the problem yet."
         )
+        elapsed = time.monotonic() - t0
+        logger.info(f"[TIMING] on_enter generate_reply (LLM+TTS+audio): {elapsed:.2f}s")
 
     @function_tool
     async def provide_hint(

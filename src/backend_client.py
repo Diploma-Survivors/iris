@@ -19,6 +19,7 @@ AUTHENTICATION:
 """
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -68,6 +69,7 @@ class BackendClient:
 
         url = f"{self.base_url}/internal/ai-interviews/{interview_id}/context"
         logger.info(f"Fetching context from: {url}")
+        t0 = time.monotonic()
 
         try:
             async with httpx.AsyncClient() as client:
@@ -77,7 +79,11 @@ class BackendClient:
                     timeout=10.0,
                 )
 
-                logger.info(f"Context response status: {response.status_code}")
+                elapsed = time.monotonic() - t0
+                logger.info(
+                    f"Context response status: {response.status_code} "
+                    f"(HTTP latency: {elapsed:.2f}s)"
+                )
 
                 if response.status_code == 200:
                     raw_response = response.json()
