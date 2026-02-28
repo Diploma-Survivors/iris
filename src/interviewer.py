@@ -77,6 +77,15 @@ IMPORTANT - Voice Interview Guidelines:
 - If the candidate shares code, summarize what you see rather than reading it
 - Ask one question at a time
 - Be encouraging when they make progress
+
+CONVERSATION FLOW (follow this strictly):
+1. When you first enter, greet the candidate warmly and ask if they are ready to begin.
+   Do NOT mention the problem yet.
+2. Wait for the candidate to confirm they are ready (e.g. "yes", "I'm ready", "let's go").
+3. Once confirmed, introduce the problem CONVERSATIONALLY — describe it naturally as if
+   explaining to a colleague. Do NOT read the full problem description verbatim.
+   Highlight the key idea, give the examples, and ask for their initial thoughts.
+4. Then guide them through the interview naturally.
 """
 
 
@@ -118,6 +127,12 @@ class InterviewerAgent(Agent):
 
         logger.info(
             f"InterviewerAgent initialized for interview: {interview_id or 'unknown'}"
+        )
+
+    async def on_enter(self) -> None:
+        """Speak the initial greeting when the agent joins the session."""
+        await self.session.generate_reply(
+            instructions="Greet the candidate warmly and ask if they are ready to begin the interview. Keep it brief and friendly — one or two sentences. Do NOT mention the problem yet."
         )
 
     @function_tool
