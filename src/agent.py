@@ -17,7 +17,7 @@ from livekit.agents import (
     inference,
     room_io,
 )
-from livekit.plugins import noise_cancellation, silero
+from livekit.plugins import deepgram, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from backend_client import backend_client
@@ -30,7 +30,10 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
-    proc.userdata["vad"] = silero.VAD.load()
+    proc.userdata["vad"] = silero.VAD.load(
+        min_speech_duration=0.1,   # Min speech to register (filter brief noise)
+        min_silence_duration=1.3,  # Longer pause before end-of-turn (reduces interruptions)
+    )
 
 
 server.setup_fnc = prewarm
@@ -82,15 +85,22 @@ async def interview_agent(ctx: JobContext):
     background_tasks = set()
 
     session = AgentSession(
-        stt=inference.STT(model="assemblyai/universal-streaming", language="en"),
-        llm=inference.LLM(model="openai/gpt-4.1-mini"),
-        tts=inference.TTS(
-            model="cartesia/sonic-3",
-            voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
+        stt=deepgram.STT(
+            model="nova-3",
+            language="en-US",
+            keyterm=[
+                "pointer", "node", "linked list", "algorithm", "recursion", "iteration",
+                "array", "hash map", "binary search", "time complexity", "space complexity",
+                "O(n)", "O(log n)", "traverse", "reverse", "iterate", "recursive",
+            ],
         ),
+        llm=inference.LLM(model="openai/gpt-4.1-mini"),
+        tts=deepgram.TTS(model="aura-2-thalia-en"),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=True,
+        preemptive_generation=False,  # Wait for user to finish before generating (reduces cut-offs)
+        min_endpointing_delay=1.2,   # Wait longer after user stops before responding
+        max_endpointing_delay=5.0,   # Allow longer pauses when user might continue
     )
 
     @session.on("conversation_item_added")
