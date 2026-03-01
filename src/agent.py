@@ -27,6 +27,7 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 server = AgentServer()
+_background_tasks: set[asyncio.Task] = set()
 
 
 def prewarm(proc: JobProcess):
@@ -114,7 +115,7 @@ async def interview_agent(ctx: JobContext):
             return
 
         role = "user" if item.role == "user" else "assistant"
-        
+
         # Extract content
         content = ""
         if isinstance(item.content, str):
@@ -172,11 +173,13 @@ async def interview_agent(ctx: JobContext):
             is_streaming = True
             streaming_msg_id = f"stream-{asyncio.get_event_loop().time()}"
             streaming_content = ""
-            
+
             # Send typing indicator
-            asyncio.create_task(send_to_frontend(
+            _t = asyncio.create_task(send_to_frontend(
                 ctx.room, "agent_status", {"status": "typing_start"}
             ))
+            _background_tasks.add(_t)
+            _t.add_done_callback(_background_tasks.discard)
 
         streaming_content += text
 
@@ -259,7 +262,7 @@ async def interview_agent(ctx: JobContext):
     )
 
     await ctx.connect()
-    
+
     # Send ready status
     await send_to_frontend(ctx.room, "agent_status", {"status": "ready"})
     logger.info(

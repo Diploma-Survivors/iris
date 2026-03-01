@@ -34,14 +34,10 @@ jobs:
 
       - name: Run tests
         env:
-          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
-          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
-          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
-          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          BACKEND_URL: ${{ secrets.BACKEND_URL }}
-          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
-        run: uv run pytest -v
+          ENV_PROD: ${{ secrets.ENV_PROD }}
+        run: |
+          echo "$ENV_PROD" > .env
+          uv run pytest -v
 
   push-image:
     needs: test
