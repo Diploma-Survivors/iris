@@ -3,17 +3,14 @@ Interviewer Agent
 
 PURPOSE:
 The core voice AI agent that conducts coding interviews.
-This replaces the generic assistant with an interview-specific agent that:
-1. Understands the problem context
-2. Guides candidates through coding problems
-3. Provides hints without giving away solutions
-4. Evaluates communication and problem-solving
+Prompts and LLM inference are now fully owned by sfinx-backend — this agent
+handles only the LiveKit session layer (STT, TTS, turn-taking, tools).
 
 HOW IT WORKS:
-1. When user joins room, agent fetches interview context from backend
-2. Agent is initialized with interview-specific system prompt
-3. During conversation, transcripts are stored to backend
-4. Agent uses tools to help with interview tasks
+1. BackendLLM routes all inference through sfinx-backend's LangChain/Gemini pipeline
+2. on_enter calls voice-start endpoint (via BackendLLM) to get the opening greeting
+3. Subsequent turns call voice-message endpoint with the user's speech
+4. Transcripts are stored in the DB by the backend endpoints
 
 VOICE INTERVIEW FLOW:
 ┌─────────────────┐
@@ -26,24 +23,16 @@ VOICE INTERVIEW FLOW:
 └────────────┬────────────────┘
              ▼
 ┌─────────────────────────────┐
-│ Fetch context from backend  │
-│ (problem, existing messages)│
+│ on_enter → BackendLLM calls │
+│ voice-start → greeting TTS  │
 └────────────┬────────────────┘
              ▼
 ┌─────────────────────────────┐
-│ Initialize agent with       │
-│ interview system prompt     │
-└────────────┬────────────────┘
-             ▼
-┌─────────────────────────────┐
-│ Conduct voice interview     │
-│ (STT → LLM → TTS)           │
-└────────────┬────────────────┘
-             ▼
-┌─────────────────────────────┐
-│ Store transcripts to backend│
+│ Each user turn → BackendLLM │
+│ calls voice-message → TTS   │
 └─────────────────────────────┘
 """
+
 import logging
 import time
 
@@ -51,95 +40,21 @@ from livekit.agents import Agent, RunContext, function_tool
 
 logger = logging.getLogger("interviewer")
 
-# Fallback prompts used when the backend / Langfuse is unreachable.
-# In normal operation these are overridden by the Langfuse-managed templates
-# fetched via the backend context endpoint.
-
-FALLBACK_INTERVIEW_PROMPT = """You are a senior software engineer conducting a coding interview.
-
-Your role:
-- Guide the candidate through the problem
-- Ask clarifying questions to understand their approach
-- Provide hints when they're stuck (but don't give away the solution)
-- Evaluate their communication and problem-solving process
-
-Rules:
-- Be encouraging but professional
-- Focus on understanding their thought process
-- If they ask for help, give progressive hints
-- Keep responses concise and conversational
-- Remember this is a VOICE conversation, so speak naturally
-- Avoid complex formatting, code blocks, or special characters
-"""
-
-FALLBACK_VOICE_ADAPTATION_PROMPT = """
-IMPORTANT - Voice Interview Guidelines:
-- You are speaking, not writing. Keep responses SHORT and conversational.
-- Avoid saying code syntax literally (don't say "curly brace" or "semicolon")
-- When discussing code, describe the logic conceptually
-- Use natural pauses and transitions
-- If the candidate shares code, summarize what you see rather than reading it
-- Ask one question at a time
-- Be encouraging when they make progress
-
-CONVERSATION FLOW (follow this strictly):
-1. When you first enter, greet the candidate warmly and ask if they are ready to begin.
-   Do NOT mention the problem yet.
-2. Wait for the candidate to confirm they are ready (e.g. "yes", "I'm ready", "let's go").
-3. Once confirmed, introduce the problem CONVERSATIONALLY — describe it naturally as if
-   explaining to a colleague. Do NOT read the full problem description verbatim.
-   Highlight the key idea, give the examples, and ask for their initial thoughts.
-4. Then guide them through the interview naturally.
-"""
-
 
 class InterviewerAgent(Agent):
     """
     Voice AI agent for conducting coding interviews.
 
-    This agent is customized for each interview session based on:
-    - The specific problem being solved
-    - Any existing conversation history (from text chat)
-    - The candidate's progress so far
+    System prompt and LLM inference are delegated to sfinx-backend via BackendLLM.
+    This agent owns the LiveKit session layer only.
     """
 
-    def __init__(
-        self,
-        interview_context: dict | None = None,
-        interview_id: str | None = None,
-    ) -> None:
-        """
-        Initialize the interviewer agent.
-
-        Args:
-            interview_context: Context fetched from backend containing:
-                - systemPrompt: Pre-formatted interview prompt
-                - problemSnapshot: Problem details
-                - existingMessages: Previous chat history
-            interview_id: UUID of the interview (for transcript storage)
-        """
+    def __init__(self, interview_id: str | None = None) -> None:
         self.interview_id = interview_id
-        self.interview_context = interview_context
-
-        base_prompt = (
-            interview_context.get("systemPrompt")
-            if interview_context
-            else None
-        ) or FALLBACK_INTERVIEW_PROMPT
-
-        voice_prompt = (
-            interview_context.get("voiceAdaptationPrompt")
-            if interview_context
-            else None
-        ) or FALLBACK_VOICE_ADAPTATION_PROMPT
-
-        instructions = base_prompt + "\n" + voice_prompt
-
-        super().__init__(instructions=instructions)
-
+        # Backend owns all prompts — empty instructions here
+        super().__init__(instructions="")
         logger.info(
             f"InterviewerAgent initialized for interview: {interview_id or 'unknown'}"
-            f" (voice prompt from {'langfuse' if interview_context and interview_context.get('voiceAdaptationPrompt') else 'fallback'})"
         )
 
     async def on_enter(self) -> None:
@@ -188,7 +103,9 @@ class InterviewerAgent(Agent):
         and what remains to be done.
         """
         logger.info(f"Summarizing progress for interview {self.interview_id}")
-        return "[Internal: Summarize what the candidate has accomplished and what's left]"
+        return (
+            "[Internal: Summarize what the candidate has accomplished and what's left]"
+        )
 
     @function_tool
     async def request_code_review(
@@ -208,4 +125,6 @@ class InterviewerAgent(Agent):
         logger.info(
             f"Requesting code review for {focus_area} in interview {self.interview_id}"
         )
-        return f"[Internal: Ask candidate to explain their code focusing on {focus_area}]"
+        return (
+            f"[Internal: Ask candidate to explain their code focusing on {focus_area}]"
+        )

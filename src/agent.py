@@ -1,6 +1,7 @@
 """
 Iris - Voice Interview Agent
 """
+
 import asyncio
 import json
 import logging
@@ -14,13 +15,13 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
-    inference,
     room_io,
 )
 from livekit.plugins import deepgram, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from backend_client import backend_client
+from backend_llm import BackendLLM
 from interviewer import InterviewerAgent
 
 logger = logging.getLogger("agent")
@@ -32,8 +33,8 @@ _background_tasks: set[asyncio.Task] = set()
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load(
-        min_speech_duration=0.1,   # Min speech to register (filter brief noise)
-        min_silence_duration=1.3,  # Longer pause before end-of-turn (reduces interruptions)
+        min_speech_duration=0.1,  # Min speech to register (filter brief noise)
+        min_silence_duration=0.5,  # How long user must be quiet before VAD fires
     )
 
 
@@ -45,19 +46,11 @@ async def send_to_frontend(room: rtc.Room, msg_type: str, data: dict):
     try:
         payload = json.dumps({"type": msg_type, **data})
         await room.local_participant.publish_data(
-            payload=payload.encode('utf-8'),
+            payload=payload.encode("utf-8"),
             reliable=True,
         )
     except Exception as e:
         logger.error(f"Failed to send to frontend: {e}")
-
-
-async def store_transcript(interview_id: str, role: str, content: str):
-    """Store transcript to backend."""
-    if interview_id and content:
-        success = await backend_client.store_transcript(interview_id, role, content)
-        if success:
-            logger.info(f"Stored {role}: {content[:50]}...")
 
 
 @server.rtc_session()
@@ -67,21 +60,8 @@ async def interview_agent(ctx: JobContext):
     logger.info(f"[TIMING] Agent joining room: {ctx.room.name}")
 
     interview_id = backend_client.extract_interview_id(ctx.room.name)
-    interview_context = None
 
-    if interview_id:
-        t_before_context = time.monotonic()
-        interview_context = await backend_client.get_interview_context(interview_id)
-        t_after_context = time.monotonic()
-        logger.info(
-            f"[TIMING] Context fetch: {(t_after_context - t_before_context):.2f}s "
-            f"(total: {(t_after_context - t_start):.2f}s)"
-        )
-        logger.info(f"Context loaded for interview: {interview_id}")
-
-    # Track streaming state
-    streaming_msg_id = None
-    streaming_content = ""
+    streaming_msg_id: str | None = None
     is_streaming = False
     background_tasks = set()
 
@@ -90,23 +70,37 @@ async def interview_agent(ctx: JobContext):
             model="nova-3",
             language="en-US",
             keyterm=[
-                "pointer", "node", "linked list", "algorithm", "recursion", "iteration",
-                "array", "hash map", "binary search", "time complexity", "space complexity",
-                "O(n)", "O(log n)", "traverse", "reverse", "iterate", "recursive",
+                "pointer",
+                "node",
+                "linked list",
+                "algorithm",
+                "recursion",
+                "iteration",
+                "array",
+                "hash map",
+                "binary search",
+                "time complexity",
+                "space complexity",
+                "O(n)",
+                "O(log n)",
+                "traverse",
+                "reverse",
+                "iterate",
+                "recursive",
             ],
         ),
-        llm=inference.LLM(model="openai/gpt-4.1-mini"),
+        llm=BackendLLM(interview_id=interview_id or ""),
         tts=deepgram.TTS(model="aura-2-thalia-en"),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=False,  # Wait for user to finish before generating (reduces cut-offs)
-        min_endpointing_delay=1.2,   # Wait longer after user stops before responding
-        max_endpointing_delay=5.0,   # Allow longer pauses when user might continue
+        min_endpointing_delay=0.4,  # Wait after VAD silence before sending turn to LLM
+        max_endpointing_delay=3.0,  # Cap on total endpointing wait
     )
 
     @session.on("conversation_item_added")
     def on_conversation_item_added(event):
-        """Handle both user and agent messages."""
+        """Send transcripts to frontend for live display."""
         if not interview_id:
             return
 
@@ -132,8 +126,7 @@ async def interview_agent(ctx: JobContext):
 
         logger.info(f"{role} message: {content[:60]}...")
 
-        # Send to frontend via data channel
-        async def send_and_store():
+        async def send_to_ui():
             msg_id = f"{role}-{asyncio.get_event_loop().time()}"
             await send_to_frontend(
                 ctx.room,
@@ -143,100 +136,77 @@ async def interview_agent(ctx: JobContext):
                     "content": content,
                     "messageId": msg_id,
                     "timestamp": asyncio.get_event_loop().time(),
-                }
+                },
             )
-            await store_transcript(interview_id, role, content)
 
-        task = asyncio.create_task(send_and_store())
+        task = asyncio.create_task(send_to_ui())
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
 
     @session.on("generation_chunk")
     def on_generation_chunk(event):
-        """Stream LLM chunks to frontend."""
-        nonlocal streaming_msg_id, streaming_content, is_streaming
+        """Stream LLM token chunks to frontend for live text display."""
+        nonlocal streaming_msg_id, is_streaming
 
-        # Extract text from event
         text = ""
-        if hasattr(event, 'chunk') and event.chunk:
-            text = getattr(event.chunk, 'text', str(event.chunk))
-        elif hasattr(event, 'delta'):
+        if hasattr(event, "chunk") and event.chunk:
+            chunk = event.chunk
+            # ChatChunk stores text in delta.content
+            if hasattr(chunk, "delta") and chunk.delta and chunk.delta.content:
+                text = chunk.delta.content
+            else:
+                text = getattr(chunk, "text", "") or getattr(chunk, "content", "")
+        elif hasattr(event, "delta"):
             text = event.delta
-        elif hasattr(event, 'text'):
+        elif hasattr(event, "text"):
             text = event.text
 
         if not text:
             return
 
-        # Start new streaming message
         if not is_streaming:
             is_streaming = True
             streaming_msg_id = f"stream-{asyncio.get_event_loop().time()}"
-            streaming_content = ""
 
-            # Send typing indicator
-            _t = asyncio.create_task(send_to_frontend(
-                ctx.room, "agent_status", {"status": "typing_start"}
-            ))
-            _background_tasks.add(_t)
-            _t.add_done_callback(_background_tasks.discard)
+            t = asyncio.create_task(
+                send_to_frontend(ctx.room, "agent_status", {"status": "typing_start"})
+            )
+            background_tasks.add(t)
+            t.add_done_callback(background_tasks.discard)
 
-        streaming_content += text
-
-        # Send chunk
-        async def send_chunk():
+        async def send_delta():
             await send_to_frontend(
                 ctx.room,
                 "transcript_delta",
-                {
-                    "role": "assistant",
-                    "delta": text,
-                    "messageId": streaming_msg_id,
-                }
+                {"role": "assistant", "delta": text, "messageId": streaming_msg_id},
             )
 
-        task = asyncio.create_task(send_chunk())
+        task = asyncio.create_task(send_delta())
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
 
     @session.on("generation_done")
     def on_generation_done(event):
-        """Handle generation completion."""
-        nonlocal is_streaming, streaming_content, streaming_msg_id
+        """Signal generation complete to frontend (typing indicator off)."""
+        nonlocal is_streaming, streaming_msg_id
 
         if is_streaming:
-            # Send final message
-            async def send_final():
+
+            async def send_done():
                 await send_to_frontend(
                     ctx.room, "agent_status", {"status": "typing_end"}
                 )
-                if streaming_content:
-                    await send_to_frontend(
-                        ctx.room,
-                        "transcript",
-                        {
-                            "role": "assistant",
-                            "content": streaming_content,
-                            "messageId": streaming_msg_id,
-                            "isFinal": True,
-                        }
-                    )
 
-            task = asyncio.create_task(send_final())
+            task = asyncio.create_task(send_done())
             background_tasks.add(task)
             task.add_done_callback(background_tasks.discard)
 
-            # Reset state
             is_streaming = False
-            streaming_content = ""
             streaming_msg_id = None
 
     # Create and start agent
     t_before_agent = time.monotonic()
-    interviewer = InterviewerAgent(
-        interview_context=interview_context,
-        interview_id=interview_id,
-    )
+    interviewer = InterviewerAgent(interview_id=interview_id)
     t_after_agent = time.monotonic()
     logger.info(
         f"[TIMING] InterviewerAgent init: {(t_after_agent - t_before_agent):.2f}s "
