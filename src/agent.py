@@ -250,6 +250,7 @@ async def interview_agent(ctx: JobContext):
         agent=interviewer,
         room=ctx.room,
         room_options=room_io.RoomOptions(
+            close_on_disconnect=False,  # Keep agent alive on brief disconnects (F5, network blip)
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=lambda params: noise_cancellation.BVCTelephony()
                 if params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
