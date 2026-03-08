@@ -5,6 +5,7 @@ Iris - Voice Interview Agent
 import asyncio
 import json
 import logging
+import os
 import time
 
 from dotenv import load_dotenv
@@ -17,7 +18,9 @@ from livekit.agents import (
     cli,
     room_io,
 )
-from livekit.plugins import deepgram, elevenlabs, noise_cancellation, silero
+from livekit.plugins import cartesia, deepgram, noise_cancellation, silero
+
+# from livekit.plugins import elevenlabs
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from backend_client import backend_client
@@ -87,7 +90,11 @@ def _create_stt(language: str):
 def _create_tts(language: str):
     """Create TTS plugin configured for the given language."""
     if language == "vi":
-        return elevenlabs.TTS(model="eleven_turbo_v2_5")
+        # return elevenlabs.TTS(model="eleven_turbo_v2_5")
+        return cartesia.TTS(
+            model=os.environ.get("CARTESIA_VI_MODEL_ID", "sonic-3"),
+            voice=os.environ.get("CARTESIA_VI_VOICE_ID", "b8cd71e3-bc14-4538-a530-d6314731c036"),
+        )
     return deepgram.TTS(model="aura-2-thalia-en")
 
 
