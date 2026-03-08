@@ -41,6 +41,20 @@ from livekit.agents import Agent, RunContext, function_tool
 logger = logging.getLogger("interviewer")
 
 
+_GREETING_INSTRUCTIONS = {
+    "en": (
+        "Greet the candidate warmly and ask if they are ready to begin "
+        "the interview. Keep it brief and friendly — one or two sentences. "
+        "Do NOT mention the problem yet."
+    ),
+    "vi": (
+        "Chào ứng viên một cách thân thiện và hỏi họ đã sẵn sàng bắt đầu "
+        "phỏng vấn chưa. Giữ ngắn gọn và thân thiện — một hoặc hai câu. "
+        "KHÔNG đề cập đến bài toán. Trả lời bằng tiếng Việt."
+    ),
+}
+
+
 class InterviewerAgent(Agent):
     """
     Voice AI agent for conducting coding interviews.
@@ -49,20 +63,24 @@ class InterviewerAgent(Agent):
     This agent owns the LiveKit session layer only.
     """
 
-    def __init__(self, interview_id: str | None = None) -> None:
+    def __init__(
+        self, interview_id: str | None = None, language: str = "en"
+    ) -> None:
         self.interview_id = interview_id
-        # Backend owns all prompts — empty instructions here
+        self.language = language
         super().__init__(instructions="")
         logger.info(
-            f"InterviewerAgent initialized for interview: {interview_id or 'unknown'}"
+            f"InterviewerAgent initialized for interview: {interview_id or 'unknown'} "
+            f"(language={language})"
         )
 
     async def on_enter(self) -> None:
         """Speak the initial greeting when the agent joins the session."""
         t0 = time.monotonic()
-        await self.session.generate_reply(
-            instructions="Greet the candidate warmly and ask if they are ready to begin the interview. Keep it brief and friendly — one or two sentences. Do NOT mention the problem yet."
+        instructions = _GREETING_INSTRUCTIONS.get(
+            self.language, _GREETING_INSTRUCTIONS["en"]
         )
+        await self.session.generate_reply(instructions=instructions)
         elapsed = time.monotonic() - t0
         logger.info(f"[TIMING] on_enter generate_reply (LLM+TTS+audio): {elapsed:.2f}s")
 

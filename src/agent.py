@@ -17,7 +17,7 @@ from livekit.agents import (
     cli,
     room_io,
 )
-from livekit.plugins import deepgram, noise_cancellation, silero
+from livekit.plugins import deepgram, elevenlabs, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from backend_client import backend_client
@@ -26,6 +26,8 @@ from interviewer import InterviewerAgent
 
 logger = logging.getLogger("agent")
 load_dotenv(".env.local")
+
+SUPPORTED_LANGUAGES = {"en", "vi"}
 
 server = AgentServer()
 _background_tasks: set[asyncio.Task] = set()
@@ -53,6 +55,53 @@ async def send_to_frontend(room: rtc.Room, msg_type: str, data: dict):
         logger.error(f"Failed to send to frontend: {e}")
 
 
+def _create_stt(language: str):
+    """Create STT plugin configured for the given language."""
+    if language == "vi":
+        return deepgram.STT(model="nova-3", language="vi")
+    return deepgram.STT(
+        model="nova-3",
+        language="en-US",
+        keyterm=[
+            "pointer",
+            "node",
+            "linked list",
+            "algorithm",
+            "recursion",
+            "iteration",
+            "array",
+            "hash map",
+            "binary search",
+            "time complexity",
+            "space complexity",
+            "O(n)",
+            "O(log n)",
+            "traverse",
+            "reverse",
+            "iterate",
+            "recursive",
+        ],
+    )
+
+
+def _create_tts(language: str):
+    """Create TTS plugin configured for the given language."""
+    if language == "vi":
+        return elevenlabs.TTS(model="eleven_turbo_v2_5")
+    return deepgram.TTS(model="aura-2-thalia-en")
+
+
+def _detect_language(context: dict | None) -> str:
+    """Extract language from backend context, defaulting to English."""
+    if not context:
+        return "en"
+    lang = context.get("language", "en")
+    if lang not in SUPPORTED_LANGUAGES:
+        logger.warning(f"Unsupported language '{lang}', falling back to English")
+        return "en"
+    return lang
+
+
 @server.rtc_session()
 async def interview_agent(ctx: JobContext):
     """Main agent session."""
@@ -61,41 +110,24 @@ async def interview_agent(ctx: JobContext):
 
     interview_id = backend_client.extract_interview_id(ctx.room.name)
 
+    # Fetch interview context to determine language before creating the session
+    context = await backend_client.get_interview_context(interview_id) if interview_id else None
+    language = _detect_language(context)
+    logger.info(f"Interview {interview_id}: language={language}")
+
     streaming_msg_id: str | None = None
     is_streaming = False
     background_tasks = set()
 
     session = AgentSession(
-        stt=deepgram.STT(
-            model="nova-3",
-            language="en-US",
-            keyterm=[
-                "pointer",
-                "node",
-                "linked list",
-                "algorithm",
-                "recursion",
-                "iteration",
-                "array",
-                "hash map",
-                "binary search",
-                "time complexity",
-                "space complexity",
-                "O(n)",
-                "O(log n)",
-                "traverse",
-                "reverse",
-                "iterate",
-                "recursive",
-            ],
-        ),
+        stt=_create_stt(language),
         llm=BackendLLM(interview_id=interview_id or ""),
-        tts=deepgram.TTS(model="aura-2-thalia-en"),
+        tts=_create_tts(language),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=False,  # Wait for user to finish before generating (reduces cut-offs)
-        min_endpointing_delay=0.4,  # Wait after VAD silence before sending turn to LLM
-        max_endpointing_delay=3.0,  # Cap on total endpointing wait
+        preemptive_generation=False,
+        min_endpointing_delay=0.4,
+        max_endpointing_delay=3.0,
     )
 
     @session.on("conversation_item_added")
@@ -206,7 +238,7 @@ async def interview_agent(ctx: JobContext):
 
     # Create and start agent
     t_before_agent = time.monotonic()
-    interviewer = InterviewerAgent(interview_id=interview_id)
+    interviewer = InterviewerAgent(interview_id=interview_id, language=language)
     t_after_agent = time.monotonic()
     logger.info(
         f"[TIMING] InterviewerAgent init: {(t_after_agent - t_before_agent):.2f}s "

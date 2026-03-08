@@ -14,6 +14,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "livekit-agents", extra = ["deepgram", "openai", "silero", "turn-detector"] },
+    { name = "livekit-plugins-elevenlabs" },
     { name = "livekit-plugins-noise-cancellation" },
     { name = "python-dotenv" },
 ]
@@ -29,6 +30,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "livekit-agents", extras = ["openai", "silero", "turn-detector", "deepgram"], specifier = "~=1.4" },
+    { name = "livekit-plugins-elevenlabs", specifier = "~=1.0" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
     { name = "python-dotenv" },
 ]
@@ -1152,6 +1154,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bf/43/50577c4d077b6bcacf3a78825c12e3c8cc0b8c437c27d90dd6c63d1298ca/livekit_plugins_deepgram-1.4.3.tar.gz", hash = "sha256:665b3db1dc6c114a88fe88bdedb33b61e446256ca075fe8d656fa92d470f556a", size = 16608, upload-time = "2026-02-23T04:03:06.968Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/5c/fa8e9f5a10eefcdab06126df42ce71a16065fd0ee641836b212ca56fe6ea/livekit_plugins_deepgram-1.4.3-py3-none-any.whl", hash = "sha256:6e7a46aa7618b25b6c7b496cf15633e11210b24a673ce75cf2371ba2eb26db75", size = 21852, upload-time = "2026-02-23T04:03:06.123Z" },
+]
+
+[[package]]
+name = "livekit-plugins-elevenlabs"
+version = "1.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents", extra = ["codecs"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/87/0f5d3371c8323b2f879d3421963980126f5136a35f069a2b19acfe22c7d5/livekit_plugins_elevenlabs-1.4.3.tar.gz", hash = "sha256:8e7a0e73447f746ac2c35b28ada83167623be8212675a37cb147c6ba74e678c6", size = 16952, upload-time = "2026-02-23T04:03:09.341Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/dd/56caf6b08880a824ed04a867ce72f47b40309d7891176941251bb5a548f1/livekit_plugins_elevenlabs-1.4.3-py3-none-any.whl", hash = "sha256:48bd49ea8ab6f4333bc10686ae1e1c7837830ee8d97cec907f15f61941e81a71", size = 19526, upload-time = "2026-02-23T04:03:08.065Z" },
 ]
 
 [[package]]
