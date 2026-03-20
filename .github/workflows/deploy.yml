@@ -11,16 +11,11 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     uses: TQTuyen/ci-cd-toolkit/.github/workflows/cd-deploy-gce.yml@main
     with:
-      instance: ${{ vars.GCE_INSTANCE }}
-      zone: ${{ vars.GCE_ZONE }}
       image: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/iris/iris:main
       container-name: iris
       deploy-path: /opt/sfinx/iris
-      project-id: ${{ vars.GCP_PROJECT_ID }}
     secrets:
-      wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
-      service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      ssh-host: ${{ secrets.VM_HOST }}
+      ssh-user: ${{ secrets.VM_USER }}
+      ssh-key: ${{ secrets.VM_SSH_KEY }}
       env-file-content: ${{ secrets.ENV_PROD }}
-    permissions:
-      contents: read
-      id-token: write
