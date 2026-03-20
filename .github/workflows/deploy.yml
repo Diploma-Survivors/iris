@@ -9,15 +9,18 @@ on:
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: TQTuyen/ci-cd-toolkit/.github/workflows/cd-deploy-cloud-run.yml@main
+    uses: TQTuyen/ci-cd-toolkit/.github/workflows/cd-deploy-gce.yml@main
     with:
-      service: iris
+      instance: ${{ vars.GCE_INSTANCE }}
+      zone: ${{ vars.GCE_ZONE }}
       image: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/iris/iris:main
-      region: asia-southeast1
+      container-name: iris
+      deploy-path: /opt/sfinx/iris
       project-id: ${{ vars.GCP_PROJECT_ID }}
     secrets:
       wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
       service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      env-file-content: ${{ secrets.ENV_PROD }}
     permissions:
       contents: read
       id-token: write
