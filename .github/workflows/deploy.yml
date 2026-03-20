@@ -8,36 +8,16 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-
-    steps:
-      - name: Set image name (lowercase)
-        id: vars
-        run: |
-          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]'):latest" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy to server via SSH
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_IMAGE: ${{ steps.vars.outputs.image }}
-          ENV_PROD: ${{ secrets.ENV_PROD }}
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          envs: GHCR_IMAGE,ENV_PROD
-          script: |
-            mkdir -p /opt/sfinx/iris
-            echo "$ENV_PROD" > /opt/sfinx/iris/.env
-            chmod 600 /opt/sfinx/iris/.env
-            docker pull "$GHCR_IMAGE"
-            docker stop iris || true
-            docker rm iris || true
-            docker run -d \
-              --name iris \
-              --restart unless-stopped \
-              --env-file /opt/sfinx/iris/.env \
-              "$GHCR_IMAGE"
-            docker image prune -f
-            echo "Deployed $GHCR_IMAGE successfully"
+    uses: TQTuyen/ci-cd-toolkit/.github/workflows/cd-deploy-cloud-run.yml@main
+    with:
+      service: iris
+      image: asia-southeast1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/iris/iris:main
+      region: asia-southeast1
+      project-id: ${{ vars.GCP_PROJECT_ID }}
+    secrets:
+      wif-provider: ${{ secrets.GCP_WIF_PROVIDER }}
+      service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    permissions:
+      contents: read
+      id-token: write
