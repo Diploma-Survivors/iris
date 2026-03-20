@@ -16,6 +16,7 @@ TEST CATEGORIES:
 3. Hint progression - Agent should provide graduated hints
 4. Edge cases - Handling unclear or off-topic input
 """
+
 import pytest
 from livekit.agents import AgentSession, inference, llm
 
@@ -144,9 +145,7 @@ async def test_asks_clarifying_questions() -> None:
         )
         await session.start(agent)
 
-        result = await session.run(
-            user_input="I think I'll use a loop to solve this"
-        )
+        result = await session.run(user_input="I think I'll use a loop to solve this")
 
         await (
             result.expect.next_event()
@@ -189,9 +188,7 @@ async def test_handles_off_topic() -> None:
         )
         await session.start(agent)
 
-        result = await session.run(
-            user_input="What's the weather like today?"
-        )
+        result = await session.run(user_input="What's the weather like today?")
 
         await (
             result.expect.next_event()
@@ -228,9 +225,7 @@ async def test_concise_voice_responses() -> None:
         )
         await session.start(agent)
 
-        result = await session.run(
-            user_input="Can you explain the problem to me?"
-        )
+        result = await session.run(user_input="Can you explain the problem to me?")
 
         await (
             result.expect.next_event()

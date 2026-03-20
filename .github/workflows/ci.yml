@@ -48,6 +48,10 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
         run: uv run pytest
 
   push-image:

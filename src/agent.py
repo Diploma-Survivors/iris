@@ -93,7 +93,9 @@ def _create_tts(language: str):
         # return elevenlabs.TTS(model="eleven_turbo_v2_5")
         return cartesia.TTS(
             model=os.environ.get("CARTESIA_VI_MODEL_ID", "sonic-3"),
-            voice=os.environ.get("CARTESIA_VI_VOICE_ID", "b8cd71e3-bc14-4538-a530-d6314731c036"),
+            voice=os.environ.get(
+                "CARTESIA_VI_VOICE_ID", "b8cd71e3-bc14-4538-a530-d6314731c036"
+            ),
         )
     return deepgram.TTS(model="aura-2-thalia-en")
 
@@ -118,7 +120,11 @@ async def interview_agent(ctx: JobContext):
     interview_id = backend_client.extract_interview_id(ctx.room.name)
 
     # Fetch interview context to determine language before creating the session
-    context = await backend_client.get_interview_context(interview_id) if interview_id else None
+    context = (
+        await backend_client.get_interview_context(interview_id)
+        if interview_id
+        else None
+    )
     language = _detect_language(context)
     logger.info(f"Interview {interview_id}: language={language}")
 

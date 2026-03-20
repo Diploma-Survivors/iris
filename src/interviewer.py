@@ -63,9 +63,7 @@ class InterviewerAgent(Agent):
     This agent owns the LiveKit session layer only.
     """
 
-    def __init__(
-        self, interview_id: str | None = None, language: str = "en"
-    ) -> None:
+    def __init__(self, interview_id: str | None = None, language: str = "en") -> None:
         self.interview_id = interview_id
         self.language = language
         super().__init__(instructions="")
