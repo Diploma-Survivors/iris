@@ -27,32 +27,6 @@ def _llm() -> llm.LLM:
     return inference.LLM(model="openai/gpt-4.1-mini")
 
 
-# Sample problem context for testing
-SAMPLE_PROBLEM_CONTEXT = {
-    "systemPrompt": """You are a senior software engineer conducting a coding interview.
-
-Problem Context:
-{
-    "title": "Two Sum",
-    "description": "Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.",
-    "examples": [
-        {"input": "nums = [2,7,11,15], target = 9", "output": "[0,1]"}
-    ]
-}
-
-Rules:
-- Be encouraging but professional
-- Focus on understanding their thought process
-- If they ask for help, give progressive hints
-- Keep responses concise and conversational
-""",
-    "problemSnapshot": {
-        "title": "Two Sum",
-        "description": "Given an array of integers nums and an integer target...",
-    },
-}
-
-
 @pytest.mark.asyncio
 async def test_professional_greeting() -> None:
     """Agent should greet the candidate professionally for an interview."""
@@ -60,10 +34,7 @@ async def test_professional_greeting() -> None:
         _llm() as llm_instance,
         AgentSession(llm=llm_instance) as session,
     ):
-        agent = InterviewerAgent(
-            interview_context=SAMPLE_PROBLEM_CONTEXT,
-            interview_id="test-123",
-        )
+        agent = InterviewerAgent(interview_id="test-123")
         await session.start(agent)
 
         result = await session.run(user_input="Hello, I'm ready for my interview")
@@ -98,10 +69,7 @@ async def test_guides_without_giving_answer() -> None:
         _llm() as llm_instance,
         AgentSession(llm=llm_instance) as session,
     ):
-        agent = InterviewerAgent(
-            interview_context=SAMPLE_PROBLEM_CONTEXT,
-            interview_id="test-123",
-        )
+        agent = InterviewerAgent(interview_id="test-123")
         await session.start(agent)
 
         result = await session.run(
@@ -139,10 +107,7 @@ async def test_asks_clarifying_questions() -> None:
         _llm() as llm_instance,
         AgentSession(llm=llm_instance) as session,
     ):
-        agent = InterviewerAgent(
-            interview_context=SAMPLE_PROBLEM_CONTEXT,
-            interview_id="test-123",
-        )
+        agent = InterviewerAgent(interview_id="test-123")
         await session.start(agent)
 
         result = await session.run(user_input="I think I'll use a loop to solve this")
@@ -182,10 +147,7 @@ async def test_handles_off_topic() -> None:
         _llm() as llm_instance,
         AgentSession(llm=llm_instance) as session,
     ):
-        agent = InterviewerAgent(
-            interview_context=SAMPLE_PROBLEM_CONTEXT,
-            interview_id="test-123",
-        )
+        agent = InterviewerAgent(interview_id="test-123")
         await session.start(agent)
 
         result = await session.run(user_input="What's the weather like today?")
@@ -219,10 +181,7 @@ async def test_concise_voice_responses() -> None:
         _llm() as llm_instance,
         AgentSession(llm=llm_instance) as session,
     ):
-        agent = InterviewerAgent(
-            interview_context=SAMPLE_PROBLEM_CONTEXT,
-            interview_id="test-123",
-        )
+        agent = InterviewerAgent(interview_id="test-123")
         await session.start(agent)
 
         result = await session.run(user_input="Can you explain the problem to me?")
