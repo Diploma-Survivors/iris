@@ -7,6 +7,25 @@ on:
     branches: ['**']
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            app:
+              - 'src/**'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -31,8 +50,8 @@ jobs:
         run: uv run ruff format --check
 
   push-image:
-    needs: lint
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, changes]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.changes.outputs.app == 'true'
     uses: TQTuyen/ci-cd-toolkit/.github/workflows/cd-deploy-gar.yml@main
     with:
       repository: ${{ vars.GCP_PROJECT_ID }}/iris/iris
